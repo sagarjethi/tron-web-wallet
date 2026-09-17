@@ -1,0 +1,24 @@
+# Dependencies and builds
+node_modules
+dist
+dist-ssr
+
+# Secrets: never commit env files other than the documented example
+.env
+.env.*
+!.env.example
+*.local
+*.pem
+*.key
+
+# Tooling state
+.vercel
+.claude/settings.local.json
+logs
+*.log
+npm-debug.log*
+.DS_Store
+.idea
+.vscode/*
+!.vscode/extensions.json
+*.sw?

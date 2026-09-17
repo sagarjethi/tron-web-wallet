@@ -1,0 +1,7 @@
+# Never upload local secrets or tooling state
+.env
+.env.*
+!.env.example
+node_modules
+dist
+.claude

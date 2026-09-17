@@ -1,0 +1,4 @@
+#!/bin/sh
+# Blocks AI co-author or attribution lines in commit messages.
+set -e
+node scripts/check-git-identity.mjs --msg "$1"

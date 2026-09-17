@@ -1,0 +1,5 @@
+#!/bin/sh
+# Blocks commits that contain secrets or use a disallowed identity.
+set -e
+node scripts/check-secrets.mjs --staged
+node scripts/check-git-identity.mjs --commit
