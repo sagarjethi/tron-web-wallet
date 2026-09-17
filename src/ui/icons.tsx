@@ -30,3 +30,5 @@ export const TronMark = (p: P) => (
     <path d="M6 7.5 17.5 27M26 10.5 13.5 15.5" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
   </svg>
 )
+export const IconSearch = (p: P) => <svg {...base(p)}><circle cx="11" cy="11" r="6.5" /><path d="M16 16l4.5 4.5" /></svg>
+export const IconEye = (p: P) => <svg {...base(p)}><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z" /><circle cx="12" cy="12" r="2.8" /></svg>

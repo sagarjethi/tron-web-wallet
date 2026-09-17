@@ -59,11 +59,13 @@ Browsers reach these through `/api/tron/{network}/{endpoint}`; the proxy refuses
 | Purpose | Endpoint |
 | --- | --- |
 | Balance and activation (full node, so it updates right after a send) | `POST /wallet/getaccount` |
+| Token discovery (every TRC20 contract an address holds) | `GET /v1/accounts/{address}` |
+| TRC10 token name and precision | `POST /wallet/getassetissuebyid` |
 | Bandwidth and energy | `POST /wallet/getaccountresource` |
 | Block height | `GET /wallet/getnowblock` |
 | Reference block for building transactions | `POST /wallet/getblock` |
 | Fee prices | `POST /wallet/getchainparameters` (`getEnergyFee`, `getTransactionFee`, `getCreateAccountFee`, `getCreateNewAccountFeeInSystemContract`) |
-| TRC20 reads and fee simulation | `POST /wallet/triggerconstantcontract` |
+| TRC20 balances, metadata and fee simulation | `POST /wallet/triggerconstantcontract` |
 | Build TRX transfer | `POST /wallet/createtransaction` |
 | Build TRC20 transfer | `POST /wallet/triggersmartcontract` |
 | Broadcast | `POST /wallet/broadcasttransaction` |
@@ -74,6 +76,8 @@ Browsers reach these through `/api/tron/{network}/{endpoint}`; the proxy refuses
 ## Token contracts
 
 Only contracts listed here are marked "Verified" in the wallet.
+Every other token an address holds is still discovered and shown, labeled "Unverified", "Look-alike" (its symbol imitates a verified token or TRX) or "TRC10".
+Balances are always read from the token contract with `balanceOf`; TronGrid's index is used only to find which contracts to read.
 Anyone can deploy a token called USDT, and Shasta already has several fakes that use Unicode look-alike letters (for example `TWkKQo8KidCEGXsH752bgmvuBa6b64Vo1Q`).
 The Add token sheet warns when a custom token's symbol normalizes to a verified one.
 

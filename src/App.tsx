@@ -1,10 +1,12 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { Onboarding, Unlock } from './components/Onboarding'
+import { parseRoute } from './lib/routes'
 import { useWallet } from './state/wallet-context'
 import { Spinner } from './ui/kit'
 
-// TronWeb is large; load it only once the wallet is unlocked.
+// TronWeb is large; load it only on screens that talk to the chain.
 const Wallet = lazy(() => import('./components/Wallet').then((m) => ({ default: m.Wallet })))
+const AddressLookup = lazy(() => import('./components/AddressLookup').then((m) => ({ default: m.AddressLookup })))
 // The component kit renders sample balances and activity, so it exists only in development builds.
 const Kit = import.meta.env.DEV ? lazy(() => import('./components/Kit').then((m) => ({ default: m.Kit }))) : null
 
@@ -28,14 +30,20 @@ function Loading() {
 
 export default function App() {
   const { hasVault, unlocked, network } = useWallet()
-  const hash = useHash()
+  const route = parseRoute(useHash())
+
+  // The lookup page colors itself by the network it is showing.
+  useEffect(() => {
+    if (route.kind === 'app') document.documentElement.dataset.network = hasVault && unlocked ? network.id : 'shasta'
+  }, [route.kind, hasVault, unlocked, network.id])
 
   useEffect(() => {
-    document.documentElement.dataset.network = hasVault && unlocked ? network.id : 'shasta'
-  }, [hasVault, unlocked, network.id])
+    if (route.kind === 'lookup') window.scrollTo(0, 0)
+  }, [route.kind])
 
   let screen
-  if (hash === '#kit' && Kit) screen = <Kit />
+  if (route.kind === 'lookup') screen = <AddressLookup network={route.network} address={route.address} />
+  else if (route.kind === 'kit' && Kit) screen = <Kit />
   else if (!hasVault) screen = <Onboarding />
   else if (!unlocked) screen = <Unlock />
   else screen = <Wallet />

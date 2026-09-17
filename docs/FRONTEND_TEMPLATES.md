@@ -92,6 +92,7 @@ All in `src/ui/kit.tsx` unless noted.
 | `CopyButton`, `useCopy` | Copy to clipboard | Confirms with a toast, explains failure. |
 | `Identicon` (`src/ui/Identicon.tsx`) | Recognize accounts at a glance | Deterministic from the address. |
 | Icons (`src/ui/icons.tsx`) | 24px stroke icons | Stroke 1.8, round caps, `aria-hidden`. |
+| `AssetsPanel`, `ActivityPanel`, `ResourceStrip` (`src/components/Portfolio.tsx`) | Balances, token list with trust labels, activity | Key-free: take `ChainData` from `useChainData(network, address)`. Pass `onSend` and `onAddToken` only where a wallet is unlocked. |
 
 ## Page templates
 
@@ -167,14 +168,32 @@ Classes: `.onboard`, `.onboard-intro`, `.onboard-copy`, `.legend`, `.onboard-pan
 
 Classes: `.app`, `.topbar`, `.layout`, `.rail`, `.main`, `.slab`, `.columns`, `.panel`.
 
-### 4. Centered card (unlock, simple gates)
+### 4. View-only lookup
+
+```
++----------------------------------------------------------+
+| brand                                    [Back to wallet] |
++----------------------------------------------------------+
+| Look up an address                                        |
+| [Shasta | Nile | Mainnet]                                 |
+| [ address .................................. ] [Look up]  |
+|  .slab: "View only on {network}", TRX, address, TRONSCAN  |
+|  .panel Assets (no Send)      |  .panel Activity          |
++----------------------------------------------------------+
+```
+
+The route is the state: `#/lookup/{network}/{address}`, so every lookup can be bookmarked or shared.
+Classes: `.lookup`, `.lookup-main`, `.lookup-form`, `.lookup-row`.
+
+### 5. Centered card (unlock, simple gates)
 
 Classes: `.unlock`, `.unlock-card`.
 One title, one field, one primary button, one quiet text link.
 
-### 5. List rows
+### 6. List rows
 
-- Assets: `.assets > .asset` with glyph, identity, balance, row action.
+- Assets: `.assets > .asset[data-trust]` with glyph, identity, trust label (`.asset-tag-verified`, `-custom`, `-unverified`, `-lookalike`, `-kind`), balance, row action.
+  Look-alike rows are struck through and never counted in totals.
 - Activity: `.activity > li > a.act[data-dir="in|out|self"][data-failed]`.
 - Key and value: `.kv > div > dt + dd`.
 

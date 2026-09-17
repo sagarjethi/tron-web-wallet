@@ -45,3 +45,29 @@ describe('contract labels', () => {
     expect(contractLabel('SomeFutureThingContract')).toBe('Some Future Thing')
   })
 })
+
+describe('withRetry', () => {
+  it('retries rate limits and network failures, then succeeds', async () => {
+    const { withRetry } = await import('../tron')
+    let calls = 0
+    const value = await withRetry(async () => {
+      calls++
+      if (calls < 3) throw new Error('Request failed with status code 429')
+      return 'ok'
+    }, 4, 1)
+    expect(value).toBe('ok')
+    expect(calls).toBe(3)
+  })
+
+  it('does not retry definitive errors', async () => {
+    const { withRetry, NotATokenError } = await import('../tron')
+    let calls = 0
+    await expect(
+      withRetry(async () => {
+        calls++
+        throw new NotATokenError('This contract does not look like a TRC20 token')
+      }, 4, 1),
+    ).rejects.toBeInstanceOf(NotATokenError)
+    expect(calls).toBe(1)
+  })
+})

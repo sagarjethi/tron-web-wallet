@@ -8,6 +8,8 @@ describe('resolveUpstream', () => {
     expect(resolveUpstream('shasta', 'wallet/getnowblock')).toBe('https://api.shasta.trongrid.io/wallet/getnowblock')
     expect(resolveUpstream('nile', 'walletsolidity/gettransactioninfobyid')).toBe('https://nile.trongrid.io/walletsolidity/gettransactioninfobyid')
     expect(resolveUpstream('mainnet', `v1/accounts/${ADDR}/transactions/trc20`)).toBe(`https://api.trongrid.io/v1/accounts/${ADDR}/transactions/trc20`)
+    expect(resolveUpstream('nile', `v1/accounts/${ADDR}`)).toBe(`https://nile.trongrid.io/v1/accounts/${ADDR}`)
+    expect(resolveUpstream('nile', 'wallet/getassetissuebyid')).toBe('https://nile.trongrid.io/wallet/getassetissuebyid')
   })
 
   it('refuses unknown networks and endpoints', () => {
@@ -17,6 +19,7 @@ describe('resolveUpstream', () => {
     expect(resolveUpstream('shasta', 'wallet/getnowblock/../../admin')).toBeNull()
     expect(resolveUpstream('shasta', 'v1/accounts/not-an-address/transactions')).toBeNull()
     expect(resolveUpstream('shasta', 'jsonrpc')).toBeNull()
+    expect(resolveUpstream('shasta', `v1/accounts/${ADDR}/resources`)).toBeNull()
   })
 })
 

@@ -1,18 +1,19 @@
 import { useEffect, useEffectEvent, useState, type FormEvent } from 'react'
 import { txUrl } from '../lib/networks'
 import { assetDecimals, assetSymbol, checkConfirmation, describeError, getClient, isTronAddress, prepareSend, signAndBroadcast, type Asset, type Confirmation, type PreparedSend } from '../lib/tron'
-import { formatAmount, fromBaseUnits, shortAddress, toBaseUnits, TRX_DECIMALS } from '../lib/units'
+import { formatAmount, formatBalance, fromBaseUnits, shortAddress, toBaseUnits, TRX_DECIMALS } from '../lib/units'
 import type { ChainData } from '../state/chain'
 import { useWallet } from '../state/wallet-context'
 import { IconCheck, IconExternal, IconWarn } from '../ui/icons'
 import { Button, Field, Notice, Sheet, Spinner } from '../ui/kit'
+import { holdingToToken } from '../lib/portfolio'
 
 type Stage = { kind: 'form' } | { kind: 'review'; prepared: PreparedSend } | { kind: 'sent'; txid: string; prepared: PreparedSend; confirmation: Confirmation }
 
 const assetKey = (a: Asset) => (a.kind === 'trx' ? 'trx' : a.token.contract)
 
 export function SendSheet({ onClose, initialAsset, chain }: { onClose: () => void; initialAsset?: Asset; chain: ChainData }) {
-  const { network, account, accounts, tokens, privateKeyFor } = useWallet()
+  const { network, account, accounts, privateKeyFor } = useWallet()
   const [asset, setAsset] = useState<Asset>(initialAsset ?? { kind: 'trx' })
   const [to, setTo] = useState('')
   const [amount, setAmount] = useState('')
@@ -24,7 +25,10 @@ export function SendSheet({ onClose, initialAsset, chain }: { onClose: () => voi
   const tw = getClient(network)
   const decimals = assetDecimals(asset)
   const symbol = assetSymbol(asset)
-  const balance = asset.kind === 'trx' ? chain.trx : (chain.tokens.find((t) => t.token.contract === asset.token.contract)?.balance ?? null)
+  // Every TRC20 token the address holds, except look-alikes of verified tokens.
+  const sendable = (chain.holdings ?? []).filter((h) => h.kind === 'trc20' && h.trust !== 'lookalike')
+  const selected = asset.kind === 'trc20' ? sendable.find((h) => h.id === asset.token.contract) : undefined
+  const balance = asset.kind === 'trx' ? chain.trx : (selected?.balance ?? null)
 
   // Poll for confirmation after broadcast.
   const sentTxid = stage.kind === 'sent' && stage.confirmation.status === 'pending' ? stage.txid : null
@@ -124,16 +128,17 @@ export function SendSheet({ onClose, initialAsset, chain }: { onClose: () => voi
                 className="select input"
                 value={assetKey(asset)}
                 onChange={(e) => {
-                  const t = tokens.find((x) => x.contract === e.target.value)
-                  setAsset(t ? { kind: 'trc20', token: t } : { kind: 'trx' })
+                  const h = sendable.find((x) => x.id === e.target.value)
+                  setAsset(h ? { kind: 'trc20', token: holdingToToken(h) } : { kind: 'trx' })
                   setError(null)
                 }}
               >
-                <option value="trx">TRX{chain.trx !== null ? `  ·  ${formatAmount(chain.trx, TRX_DECIMALS)}` : ''}</option>
-                {chain.tokens.map(({ token, balance: b }) => (
-                  <option key={token.contract} value={token.contract}>
-                    {token.symbol}
-                    {b !== null ? `  ·  ${formatAmount(b, token.decimals)}` : ''}
+                <option value="trx">TRX{chain.trx !== null ? `, ${formatBalance(chain.trx, TRX_DECIMALS)}` : ''}</option>
+                {sendable.map((h) => (
+                  <option key={h.id} value={h.id}>
+                    {h.symbol}
+                    {h.trust === 'unverified' ? ' (unverified)' : ''}
+                    {h.balance !== null ? `, ${formatBalance(h.balance, h.decimals)}` : ''}
                   </option>
                 ))}
               </select>
@@ -155,7 +160,7 @@ export function SendSheet({ onClose, initialAsset, chain }: { onClose: () => voi
             </div>
           ) : null}
 
-          <Field label="Amount" aside={balance !== null ? `Balance ${formatAmount(balance, decimals)} ${symbol}` : undefined} error={amountError}>
+          <Field label="Amount" aside={balance !== null ? `Balance ${formatBalance(balance, decimals)} ${symbol}` : undefined} error={amountError}>
             {(p) => (
               <div className="input-group">
                 <input {...p} className="input amount-input" inputMode="decimal" placeholder="0.00" autoComplete="off" value={amount} onChange={(e) => setAmount(e.target.value.replace(',', '.'))} />
@@ -201,6 +206,9 @@ export function SendSheet({ onClose, initialAsset, chain }: { onClose: () => voi
         }
       >
         {network.kind === 'mainnet' ? <Notice tone="danger">This is mainnet. The transfer moves real funds and cannot be reversed.</Notice> : null}
+        {selected?.trust === 'unverified' ? (
+          <Notice tone="warn">This token is not verified by this wallet. Sending it runs the token contract's own code, which can behave unexpectedly. Check the contract on TRONSCAN first.</Notice>
+        ) : null}
 
         <div className="review-amount">
           <span className="review-value">{formatAmount(p.amount, decimals, decimals)}</span>

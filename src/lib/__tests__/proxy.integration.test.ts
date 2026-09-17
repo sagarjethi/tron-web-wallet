@@ -11,6 +11,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { handleTronProxy } from '../../../api/tron'
 import { createMnemonic, defaultPath, deriveKey } from '../derivation'
 import { NETWORKS, type Network } from '../networks'
+import { getPortfolio } from '../portfolio'
 import { checkConfirmation, getAccountState, getActivity, getBlockHeight, getResources, getTokenMetadata, getTrc20Balance, prepareSend } from '../tron'
 
 const run = process.env.TRON_NETWORK_TESTS === '1'
@@ -52,6 +53,13 @@ describe.runIf(run)('Shasta through the /api/tron proxy', { timeout: 60_000 }, (
     expect(await getTrc20Balance(tw, network.tokens[0].contract, sender)).toBeGreaterThanOrEqual(0n)
     expect((await getTokenMetadata(tw, network.tokens[0].contract)).symbol).toBe('USDT')
     expect(Array.isArray(await getActivity(network, sender))).toBe(true)
+  })
+
+  it('discovers TRC20 and TRC10 holdings through the proxy', async () => {
+    const nile = { ...NETWORKS.nile, fullHost: network.fullHost.replace('/shasta', '/nile') }
+    const p = await getPortfolio(new TronWeb({ fullHost: nile.fullHost }), nile, deriveKey(ABANDON, defaultPath(0)).address)
+    expect(p.holdings.some((h) => h.kind === 'trc10')).toBe(true)
+    expect(p.holdings.filter((h) => h.kind === 'trc20').length).toBeGreaterThan(1)
   })
 
   it('builds and signs TRX and TRC20 transfers (never broadcast)', async () => {

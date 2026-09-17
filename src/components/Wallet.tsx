@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from 'react'
-import { addressUrl, contractUrl, NETWORKS, NETWORK_ORDER, txUrl, type NetworkId, type TokenPreset } from '../lib/networks'
-import type { ActivityItem, Asset } from '../lib/tron'
+import { addressUrl, NETWORKS, NETWORK_ORDER, type NetworkId } from '../lib/networks'
+import { lookupHref } from '../lib/routes'
+import type { Asset } from '../lib/tron'
 import { formatAmount, shortAddress, TRX_DECIMALS } from '../lib/units'
 import { useChainData, type ChainData } from '../state/chain'
 import { useWallet, type Account } from '../state/wallet-context'
-import { IconArrowIn, IconArrowOut, IconChevron, IconDrop, IconExternal, IconLock, IconPlus, IconReceive, IconRefresh, IconSend, IconSettings, IconSign, TronMark } from '../ui/icons'
+import { IconChevron, IconDrop, IconLock, IconPlus, IconReceive, IconSearch, IconSend, IconSettings, IconSign, TronMark } from '../ui/icons'
 import { Identicon } from '../ui/Identicon'
-import { Button, CopyButton, IconButton, Notice } from '../ui/kit'
+import { CopyButton, IconButton, Notice } from '../ui/kit'
 import { AccountSheet, AddAccountSheet } from './AccountSheets'
+import { ActivityPanel, AssetsPanel, ResourceStrip } from './Portfolio'
 import { ReceiveSheet } from './ReceiveSheet'
 import { SendSheet } from './SendSheet'
 import { SettingsSheet } from './SettingsSheet'
@@ -19,7 +21,7 @@ type Open = null | { kind: 'send'; asset?: Asset } | { kind: 'receive' } | { kin
 export function Wallet() {
   const w = useWallet()
   const account = w.account!
-  const chain = useChainData(w.network, account.address, w.tokens)
+  const chain = useChainData(w.network, account.address, w.customTokens)
   const [open, setOpen] = useState<Open>(null)
   const close = () => setOpen(null)
 
@@ -36,6 +38,9 @@ export function Wallet() {
         </div>
         <div className="topbar-actions">
           <NetworkSwitch height={chain.height} />
+          <a className="icon-btn" href={lookupHref(w.network.id)} aria-label="Look up any address" title="Look up any address">
+            <IconSearch />
+          </a>
           <IconButton label="Settings" onClick={() => setOpen({ kind: 'settings' })}>
             <IconSettings />
           </IconButton>
@@ -61,8 +66,8 @@ export function Wallet() {
           ) : null}
 
           <div className="columns">
-            <Assets chain={chain} onSend={(asset) => setOpen({ kind: 'send', asset })} onAddToken={() => setOpen({ kind: 'add-token' })} />
-            <Activity chain={chain} address={account.address} />
+            <AssetsPanel chain={chain} network={w.network} onSend={(asset) => setOpen({ kind: 'send', asset })} onAddToken={() => setOpen({ kind: 'add-token' })} />
+            <ActivityPanel chain={chain} network={w.network} address={account.address} emptyHint="Share your address or use the faucet to receive your first TRX." />
           </div>
         </main>
       </div>
@@ -175,7 +180,7 @@ function AccountsRail({ onAdd, onManage, trx }: { onAdd: () => void; onManage: (
 
 function Slab({ account, chain, onSend, onReceive, onSign }: { account: Account; chain: ChainData; onSend: () => void; onReceive: () => void; onSign: () => void }) {
   const { network } = useWallet()
-  const empty = chain.trx === 0n && chain.tokens.every((t) => !t.balance)
+  const empty = chain.trx === 0n && (chain.holdings ?? []).every((h) => !h.balance)
   const [whole, frac] = chain.trx === null ? [null, null] : formatAmount(chain.trx, TRX_DECIMALS, 6).split('.')
 
   return (
@@ -235,150 +240,7 @@ function Slab({ account, chain, onSend, onReceive, onSign }: { account: Account;
           ) : null}
         </div>
       </div>
-      {chain.activated === false ? (
-        <p className="slab-resources slab-inactive">Not active on {network.name} yet. The account activates when it receives its first TRX.</p>
-      ) : chain.resources ? (
-        <dl className="slab-resources">
-          <div>
-            <dt>Free bandwidth</dt>
-            <dd>{chain.resources.freeBandwidth.toLocaleString('en-US')}</dd>
-          </div>
-          <div>
-            <dt>Staked bandwidth</dt>
-            <dd>{chain.resources.stakedBandwidth.toLocaleString('en-US')}</dd>
-          </div>
-          <div>
-            <dt>Energy</dt>
-            <dd>{chain.resources.energy.toLocaleString('en-US')}</dd>
-          </div>
-        </dl>
-      ) : null}
+      <ResourceStrip chain={chain} network={network} />
     </section>
-  )
-}
-
-// ---------------------------------------------------------------- assets
-
-function Assets({ chain, onSend, onAddToken }: { chain: ChainData; onSend: (a: Asset) => void; onAddToken: () => void }) {
-  const { network } = useWallet()
-  const presetSet = new Set(network.tokens.map((t) => t.contract))
-  return (
-    <section className="panel" aria-labelledby="assets-h">
-      <div className="panel-head">
-        <h2 id="assets-h">Assets</h2>
-        <Button variant="ghost" size="sm" onClick={onAddToken}>
-          <IconPlus /> Add token
-        </Button>
-      </div>
-      <ul className="assets">
-        <AssetRow symbol="TRX" name="TRON" balance={chain.trx} decimals={TRX_DECIMALS} onSend={() => onSend({ kind: 'trx' })} />
-        {chain.tokens.map(({ token, balance, error }) => (
-          <AssetRow key={token.contract} symbol={token.symbol} name={token.name} balance={balance} decimals={token.decimals} error={error} token={token} verified={presetSet.has(token.contract)} onSend={() => onSend({ kind: 'trc20', token })} />
-        ))}
-      </ul>
-    </section>
-  )
-}
-
-function AssetRow({ symbol, name, balance, decimals, error, token, verified, onSend }: { symbol: string; name: string; balance: bigint | null; decimals: number; error?: string; token?: TokenPreset; verified?: boolean; onSend: () => void }) {
-  const { network } = useWallet()
-  return (
-    <li className="asset">
-      <span className="asset-glyph" aria-hidden>
-        {symbol.slice(0, 1)}
-      </span>
-      <span className="asset-id">
-        <span className="asset-symbol">
-          {symbol}
-          {token && verified ? <span className="asset-tag">Verified</span> : null}
-          {token && !verified ? <span className="asset-tag asset-tag-custom">Custom</span> : null}
-        </span>
-        <span className="asset-name">
-          {token ? (
-            <a href={contractUrl(network, token.contract)} target="_blank" rel="noreferrer" className="mono">
-              {shortAddress(token.contract, 6, 6)}
-            </a>
-          ) : (
-            name
-          )}
-        </span>
-      </span>
-      <span className="asset-bal">{balance === null ? error ? <span className="asset-err" title={error}>Unavailable</span> : <span className="skeleton" /> : formatAmount(balance, decimals, 6)}</span>
-      <Button variant="ghost" size="sm" className="asset-send" onClick={onSend} disabled={!balance}>
-        Send
-      </Button>
-    </li>
-  )
-}
-
-// ---------------------------------------------------------------- activity
-
-const ACTIVITY_LIMIT = 20
-
-const timeFmt = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-
-function Activity({ chain, address }: { chain: ChainData; address: string }) {
-  const { network } = useWallet()
-  return (
-    <section className="panel" aria-labelledby="activity-h">
-      <div className="panel-head">
-        <h2 id="activity-h">Activity</h2>
-        <IconButton label="Refresh" onClick={chain.refresh}>
-          <IconRefresh />
-        </IconButton>
-      </div>
-      {chain.activityError ? <Notice tone="warn">{chain.activityError}</Notice> : null}
-      {chain.activity === null ? (
-        <div className="activity-empty">
-          <span className="skeleton" style={{ width: '60%' }} />
-          <span className="skeleton" style={{ width: '40%' }} />
-        </div>
-      ) : chain.activity.length === 0 ? (
-        <div className="activity-empty">
-          <p>No transactions on {network.name} yet.</p>
-          <p className="muted">Share your address or use the faucet to receive your first TRX.</p>
-        </div>
-      ) : (
-        <ul className="activity">
-          {chain.activity.slice(0, ACTIVITY_LIMIT).map((item) => (
-            <ActivityRow key={`${item.txid}-${item.symbol}-${item.counterparty}`} item={item} self={address} />
-          ))}
-        </ul>
-      )}
-      <a className="text-link panel-foot" href={addressUrl(network, address)} target="_blank" rel="noreferrer">
-        {chain.activity && chain.activity.length > ACTIVITY_LIMIT ? 'Older transactions on TRONSCAN' : 'Full history on TRONSCAN'} <IconExternal />
-      </a>
-    </section>
-  )
-}
-
-function ActivityRow({ item }: { item: ActivityItem; self: string }) {
-  const { network } = useWallet()
-  const incoming = item.direction === 'in'
-  const title = item.amount > 0n || item.symbol ? `${incoming ? 'Received' : item.direction === 'self' ? 'Sent to self' : 'Sent'} ${item.symbol}` : item.label
-  return (
-    <li>
-      <a className="act" href={txUrl(network, item.txid)} target="_blank" rel="noreferrer" data-dir={item.direction} data-failed={item.failed || undefined}>
-        <span className="act-icon" aria-hidden>
-          {incoming ? <IconArrowIn /> : <IconArrowOut />}
-        </span>
-        <span className="act-main">
-          <span className="act-title">
-            {item.label === 'Approval' ? `Approved ${item.symbol}` : title}
-            {item.failed ? <span className="act-failed">Failed</span> : null}
-          </span>
-          <span className="act-sub">
-            <span className="mono">{shortAddress(item.counterparty, 5, 5)}</span>
-            <span>{timeFmt.format(item.timestamp)}</span>
-          </span>
-        </span>
-        {item.symbol ? (
-          <span className="act-amount">
-            {incoming ? '+' : item.direction === 'out' ? '-' : ''}
-            {formatAmount(item.amount, item.decimals, 4)}
-          </span>
-        ) : null}
-      </a>
-    </li>
   )
 }

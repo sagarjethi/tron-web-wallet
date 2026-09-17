@@ -31,3 +31,15 @@ describe('units', () => {
     expect(shortAddress('TUEZSdKsoDHQMeZwihtdoBiN46zxhGWYdH')).toBe('TUEZSd…WYdH')
   })
 })
+
+describe('formatBalance', () => {
+  it('never renders a non-zero balance as zero', async () => {
+    const { formatBalance } = await import('../units')
+    expect(formatBalance(1n, 18)).toBe('<0.000001')
+    expect(formatBalance(2717908992n, 18)).toBe('<0.000001')
+    expect(formatBalance(1n, 2)).toBe('0.01')
+    expect(formatBalance(0n, 18)).toBe('0')
+    expect(formatBalance(30000230000000002717908992n, 18)).toBe('30,000,230')
+    expect(formatBalance(19589654444n, 6)).toBe('19,589.654444')
+  })
+})

@@ -22,6 +22,24 @@ export function getClient(network: Network): TronWeb {
   return client
 }
 
+/** Rate limits, gateway errors and dropped connections: worth retrying, and never proof about the chain. */
+export function isTransientError(e: unknown): boolean {
+  const m = e instanceof Error ? e.message : String(e)
+  return /\b(429|500|502|503|504)\b|Network Error|Failed to fetch|fetch failed|ERR_NETWORK|ECONNRESET|ETIMEDOUT|timeout/i.test(m)
+}
+
+/** Runs a read with exponential backoff on transient failures only. */
+export async function withRetry<T>(fn: () => Promise<T>, attempts = 4, baseDelayMs = 400): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await fn()
+    } catch (e) {
+      if (attempt >= attempts || !isTransientError(e)) throw e
+      await new Promise((r) => setTimeout(r, baseDelayMs * 2 ** (attempt - 1) * (0.75 + Math.random() * 0.5)))
+    }
+  }
+}
+
 /** Turns transport failures into sentences a wallet user can act on. */
 export function describeError(e: unknown): string {
   const m = e instanceof Error ? e.message : String(e)
@@ -72,20 +90,33 @@ export async function getTrc20Balance(tw: TronWeb, contract: string, owner: stri
   return hex ? BigInt('0x' + hex) : 0n
 }
 
+/** The contract definitively is not a readable TRC20 token (as opposed to a failed request). */
+export class NotATokenError extends Error {}
+
 export async function getTokenMetadata(tw: TronWeb, contract: string): Promise<TokenPreset> {
   if (!isTronAddress(contract)) throw new Error('That is not a TRON contract address')
   const decode = (hex: string, type: string) => tw.utils.abi.decodeParams([], [type], '0x' + hex)[0]
+  // Most tokens return string; some older ones return bytes32 padded with zero bytes.
+  const decodeText = (hex: string) => {
+    try {
+      return String(decode(hex, 'string'))
+    } catch {
+      const bytes = (hex.slice(0, 64).match(/../g) ?? []).map((h) => parseInt(h, 16)).filter((b) => b !== 0)
+      return new TextDecoder().decode(new Uint8Array(bytes))
+    }
+  }
   try {
     const [symbol, name, decimals] = await Promise.all([
-      constantCall(tw, contract, 'symbol()').then((r) => String(decode(r.hex, 'string'))),
-      constantCall(tw, contract, 'name()').then((r) => String(decode(r.hex, 'string'))),
+      constantCall(tw, contract, 'symbol()').then((r) => decodeText(r.hex)),
+      constantCall(tw, contract, 'name()').then((r) => decodeText(r.hex)),
       constantCall(tw, contract, 'decimals()').then((r) => Number(decode(r.hex, 'uint8'))),
     ])
     return { contract, symbol, name, decimals }
   } catch (e) {
+    if (isTransientError(e)) throw e
     const msg = e instanceof Error ? e.message : String(e)
-    if (/not exist/i.test(msg)) throw new Error('No contract exists at this address on this network')
-    throw new Error('This contract does not look like a TRC20 token')
+    if (/not exist/i.test(msg)) throw new NotATokenError('No contract exists at this address on this network')
+    throw new NotATokenError('This contract does not look like a TRC20 token')
   }
 }
 

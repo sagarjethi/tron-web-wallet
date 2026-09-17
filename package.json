@@ -9,7 +9,7 @@
     "lint": "oxlint",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:network": "TRON_NETWORK_TESTS=1 vitest run shasta proxy.integration",
+    "test:network": "TRON_NETWORK_TESTS=1 vitest run integration",
     "typecheck": "tsc -b",
     "check:secrets": "node scripts/check-secrets.mjs",
     "prepare": "git config core.hooksPath .githooks 2>/dev/null || true"

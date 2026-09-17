@@ -369,3 +369,50 @@
 .kit-type code { font-size: var(--t-xs); color: var(--ink-2); }
 .kit-demo { padding: 20px; border: 1px dashed var(--line); border-radius: var(--r-panel); display: grid; gap: 14px; background: var(--bg); }
 .kit-slabs { display: grid; gap: 16px; }
+
+/* ============================================================
+   Token trust labels and address lookup
+   ============================================================ */
+.panel-count { margin-left: 8px; font-size: var(--t-sm); font-weight: 600; color: var(--ink-2); }
+.panel-note { margin: 8px 20px 0; }
+.asset-symbol-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 12ch; }
+.asset-glyph-trx { background: var(--net); color: #fff; }
+/* Mixing toward --ink keeps the network hue readable on light and dark surfaces alike. */
+.asset-tag-verified { background: color-mix(in srgb, var(--net) 16%, transparent); color: color-mix(in srgb, var(--net) 70%, var(--ink)); }
+.asset-tag-unverified { background: var(--surface-2); color: var(--ink-2); }
+.asset-tag-lookalike { background: var(--danger-soft); color: var(--danger); }
+.asset-tag-kind { background: transparent; color: var(--ink-3); box-shadow: inset 0 0 0 1px var(--line); }
+.asset[data-trust='lookalike'] .asset-symbol-text,
+.asset[data-trust='lookalike'] .asset-bal { text-decoration: line-through; text-decoration-color: color-mix(in srgb, var(--danger) 60%, transparent); color: var(--ink-2); }
+.asset-loading .asset-id { gap: 0; }
+
+.brand-link { color: inherit; text-decoration: none; }
+.lookup-main { max-width: 1080px; margin: 0 auto; padding: clamp(16px, 3vw, 36px) clamp(16px, 2.5vw, 32px) 48px; display: grid; gap: clamp(16px, 2vw, 24px); }
+.lookup-intro { display: grid; gap: 6px; max-width: 64ch; }
+.lookup-intro h1 { font-size: var(--t-2xl); font-weight: 800; letter-spacing: -0.02em; }
+.lookup-form { display: grid; gap: 14px; padding: 18px 20px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-panel); }
+.lookup-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: end; }
+.lookup-row .btn { min-height: 44px; }
+.lookup-row:has(.field-error) { align-items: center; }
+.lookup-empty { display: flex; align-items: center; gap: 8px; font-size: var(--t-sm); }
+.lookup-empty svg { width: 18px; height: 18px; }
+.slab-address-text { font-size: var(--t-sm); overflow-wrap: anywhere; opacity: 0.9; }
+
+.lookup-link {
+  display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; margin-top: 4px;
+  border: 1px dashed var(--line); border-radius: var(--r-control); text-decoration: none; color: inherit;
+}
+.lookup-link:hover { border-color: var(--ink-3); background: var(--surface); }
+.lookup-link svg { width: 20px; height: 20px; flex: none; margin-top: 2px; color: var(--net); }
+.lookup-link > span { display: grid; gap: 2px; font-size: var(--t-sm); }
+
+.unlock-links { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+
+@media (max-width: 560px) {
+  .lookup-row { grid-template-columns: 1fr; }
+  .slab-actions-single { grid-template-columns: 1fr; }
+  .slab-actions-single .slab-action { flex-direction: row; height: 46px; }
+  .lookup-form .segmented { justify-self: stretch; }
+  .lookup-form .segmented button { flex: 1; }
+  .slab-address-text { font-size: 12px; }
+}

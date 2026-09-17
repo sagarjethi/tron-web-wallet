@@ -30,6 +30,16 @@ export function formatAmount(value: bigint, decimals: number, maxFraction = 6): 
   return shown ? `${grouped}.${shown}` : grouped
 }
 
+/**
+ * Balance for display. Never shows a non-zero balance as 0: amounts below the smallest shown
+ * digit render as "<0.000001" instead.
+ */
+export function formatBalance(value: bigint, decimals: number, maxFraction = 6): string {
+  const shown = formatAmount(value, decimals, maxFraction)
+  if (value > 0n && shown === '0') return `<0.${'0'.repeat(Math.max(0, Math.min(maxFraction, decimals) - 1))}1`
+  return shown
+}
+
 export function shortAddress(address: string, lead = 6, tail = 4): string {
   return address.length <= lead + tail + 1 ? address : `${address.slice(0, lead)}…${address.slice(-tail)}`
 }

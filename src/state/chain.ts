@@ -1,12 +1,7 @@
 import { useCallback, useEffect, useEffectEvent, useRef, useState } from 'react'
 import type { Network, TokenPreset } from '../lib/networks'
-import { describeError as friendly, getAccountState, getActivity, getBlockHeight, getClient, getResources, getTrc20Balance, type ActivityItem, type Resources } from '../lib/tron'
-
-export interface TokenBalance {
-  token: TokenPreset
-  balance: bigint | null
-  error?: string
-}
+import { getPortfolio, type Holding } from '../lib/portfolio'
+import { describeError as friendly, getActivity, getBlockHeight, getClient, getResources, type ActivityItem, type Resources } from '../lib/tron'
 
 export interface ChainData {
   height: number | null
@@ -14,7 +9,10 @@ export interface ChainData {
   /** null until known */
   activated: boolean | null
   resources: Resources | null
-  tokens: TokenBalance[]
+  /** Every TRC20 and TRC10 token the address holds, plus verified and custom tokens at zero. null until loaded. */
+  holdings: Holding[] | null
+  /** Discovered tokens left out because the address holds too many to read at once. */
+  omittedTokens: number
   activity: ActivityItem[] | null
   activityError: string | null
   error: string | null
@@ -22,23 +20,36 @@ export interface ChainData {
   refresh: () => void
 }
 
-type Snapshot = Omit<ChainData, 'refresh' | 'tokens'> & { scope: string; tokens: Map<string, TokenBalance> }
+type Snapshot = Omit<ChainData, 'refresh'> & { scope: string }
 
 const POLL_MS = 15_000
 const MIN_REFRESH_GAP_MS = 5_000
 
-const empty = (scope: string): Snapshot => ({ scope, height: null, trx: null, activated: null, resources: null, tokens: new Map(), activity: null, activityError: null, error: null, refreshedAt: null })
+const empty = (scope: string): Snapshot => ({
+  scope,
+  height: null,
+  trx: null,
+  activated: null,
+  resources: null,
+  holdings: null,
+  omittedTokens: 0,
+  activity: null,
+  activityError: null,
+  error: null,
+  refreshedAt: null,
+})
 
 /**
- * Balances, resources and activity for one account on one network, polled while the tab is visible.
- * Every snapshot is tagged with its scope, so numbers from a previous account or network never render.
+ * Balances, tokens, resources and activity for any address on one network, polled while the tab is visible.
+ * Needs no keys, so it serves both the wallet and the view-only address lookup.
+ * Every snapshot is tagged with its scope, so numbers from a previous address or network never render.
  */
-export function useChainData(network: Network, address: string | undefined, tokens: TokenPreset[]): ChainData {
+export function useChainData(network: Network, address: string | undefined, customTokens: TokenPreset[] = []): ChainData {
   const scope = `${network.id}|${address}`
   const [snap, setSnap] = useState<Snapshot>(() => empty(scope))
   const [tick, setTick] = useState(0)
   const refresh = useCallback(() => setTick((t) => t + 1), [])
-  const tokenKey = tokens.map((t) => t.contract).join(',')
+  const tokenKey = customTokens.map((t) => t.contract).join(',')
   const lastLoad = useRef(0)
 
   const load = useEffectEvent(async (isCurrent: () => boolean) => {
@@ -48,32 +59,26 @@ export function useChainData(network: Network, address: string | undefined, toke
       if (isCurrent()) setSnap((s) => fn(s.scope === scope ? s : empty(scope)))
     }
 
-    const [height, trx, resources, ...tokenResults] = await Promise.allSettled([getBlockHeight(tw), getAccountState(tw, address), getResources(tw, address), ...tokens.map((t) => getTrc20Balance(tw, t.contract, address))])
-    const failure = [height, trx, resources].find((r) => r.status === 'rejected')
-    update((s) => {
-      const nextTokens = new Map(s.tokens)
-      tokens.forEach((token, i) => {
-        const r = tokenResults[i]
-        if (r.status === 'fulfilled') nextTokens.set(token.contract, { token, balance: r.value })
-        else nextTokens.set(token.contract, { token, balance: s.tokens.get(token.contract)?.balance ?? null, error: friendly(r.reason) })
-      })
-      return {
-        ...s,
-        height: height.status === 'fulfilled' ? height.value : s.height,
-        trx: trx.status === 'fulfilled' ? trx.value.balance : s.trx,
-        activated: trx.status === 'fulfilled' ? trx.value.activated : s.activated,
-        resources: resources.status === 'fulfilled' ? resources.value : s.resources,
-        tokens: nextTokens,
-        error: failure ? friendly(failure.reason) : null,
-        refreshedAt: Date.now(),
-      }
-    })
+    const [height, portfolio, resources] = await Promise.allSettled([getBlockHeight(tw), getPortfolio(tw, network, address, customTokens), getResources(tw, address)])
+    const failure = [portfolio, height, resources].find((r) => r.status === 'rejected')
+    update((s) => ({
+      ...s,
+      height: height.status === 'fulfilled' ? height.value : s.height,
+      trx: portfolio.status === 'fulfilled' ? portfolio.value.trx : s.trx,
+      activated: portfolio.status === 'fulfilled' ? portfolio.value.activated : s.activated,
+      holdings: portfolio.status === 'fulfilled' ? portfolio.value.holdings : s.holdings,
+      omittedTokens: portfolio.status === 'fulfilled' ? portfolio.value.omitted : s.omittedTokens,
+      resources: resources.status === 'fulfilled' ? resources.value : s.resources,
+      error: failure ? friendly(failure.reason) : null,
+      refreshedAt: Date.now(),
+    }))
 
     try {
       const activity = await getActivity(network, address)
       update((s) => ({ ...s, activity, activityError: null }))
     } catch (e) {
-      update((s) => ({ ...s, activity: s.activity ?? [], activityError: friendly(e) }))
+      // Keep the last known list (or none): a failed request must never read as "no transactions".
+      update((s) => ({ ...s, activityError: friendly(e) }))
     }
   })
 
@@ -98,10 +103,5 @@ export function useChainData(network: Network, address: string | undefined, toke
     }
   }, [address, refresh])
 
-  const current = snap.scope === scope ? snap : empty(scope)
-  return {
-    ...current,
-    tokens: tokens.map((token) => current.tokens.get(token.contract) ?? { token, balance: null }),
-    refresh,
-  }
+  return { ...(snap.scope === scope ? snap : empty(scope)), refresh }
 }

@@ -1,9 +1,10 @@
 import { useState, type FormEvent } from 'react'
 import { createMnemonic, isValidMnemonic, mnemonicWordlist, normalizeMnemonic } from '../lib/derivation'
 import { NETWORKS, NETWORK_ORDER } from '../lib/networks'
+import { lookupHref } from '../lib/routes'
 import { WrongPasswordError } from '../lib/vault'
 import { useWallet } from '../state/wallet-context'
-import { IconBack, IconCopy, IconShield, TronMark } from '../ui/icons'
+import { IconBack, IconCopy, IconSearch, IconShield, TronMark } from '../ui/icons'
 import { Button, Field, Notice, Segmented, Sheet } from '../ui/kit'
 import { useCopy } from '../ui/toast'
 
@@ -78,6 +79,13 @@ function Choose({ onPick }: { onPick: (f: Flow) => void }) {
           Import a recovery phrase
         </Button>
       </div>
+      <a className="lookup-link" href={lookupHref('shasta')}>
+        <IconSearch />
+        <span>
+          <strong>Look up any address</strong>
+          <span className="muted">Check TRX and token balances on Shasta, Nile or mainnet. No wallet needed.</span>
+        </span>
+      </a>
     </div>
   )
 }
@@ -359,9 +367,14 @@ export function Unlock() {
         <Button variant="primary" block type="submit" busy={busy}>
           Unlock
         </Button>
-        <button type="button" className="text-link center" onClick={() => setResetOpen(true)}>
-          Forgot password?
-        </button>
+        <div className="unlock-links">
+          <button type="button" className="text-link" onClick={() => setResetOpen(true)}>
+            Forgot password?
+          </button>
+          <a className="text-link" href={lookupHref('shasta')}>
+            Look up an address
+          </a>
+        </div>
       </form>
 
       <Sheet

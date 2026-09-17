@@ -8,7 +8,8 @@ It starts on the Shasta test network and also supports Nile and mainnet.
 - **Send** TRX and any TRC20 token (USDT and others), with a review step that itemizes bandwidth, energy and account activation costs before signing.
 - **BIP-44 derivation** on `m/44'/195'/0'/0/n` (TronLink compatible), account-level `m/44'/195'/n'/0/0` (Ledger Live compatible), or any custom TRON path.
 - **Multiple accounts** from one recovery phrase, with names, identicons and per-account private key export.
-- **TRC20 balances** read directly from each token contract with `balanceOf`, plus custom tokens by contract address with look-alike scam detection.
+- **Every token an address holds**: TRC20 and TRC10 tokens are discovered automatically, balances are read from each contract with `balanceOf`, and unverified or look-alike (scam) tokens are clearly labeled.
+- **Address lookup**: check TRX and token balances, resources and activity for any address on Shasta, Nile or mainnet, with no wallet or private key (`#/lookup/{network}/{address}`, shareable).
 - **Message signing and verification** with TRON's `signMessageV2` format.
 - **Receive** with QR code, testnet faucet shortcuts, and live activity from TronGrid.
 - **Security**: the phrase is encrypted with AES-256-GCM under a PBKDF2 (600,000 iterations) key from your password, kept in memory only while unlocked, and cleared on auto-lock.

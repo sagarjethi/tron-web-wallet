@@ -24,9 +24,9 @@ const ADDRESS = '[1-9A-HJ-NP-Za-km-z]{34}'
 
 /** Every endpoint the wallet (and TronWeb on its behalf) calls. Anything else is refused. */
 export const ALLOWED_PATHS: RegExp[] = [
-  /^wallet\/(getnowblock|getblock|getaccount|getaccountresource|getchainparameters|triggerconstantcontract|triggersmartcontract|createtransaction|broadcasttransaction|gettransactioninfobyid|gettransactionbyid)$/,
+  /^wallet\/(getnowblock|getblock|getaccount|getaccountresource|getchainparameters|triggerconstantcontract|triggersmartcontract|createtransaction|broadcasttransaction|gettransactioninfobyid|gettransactionbyid|getassetissuebyid)$/,
   /^walletsolidity\/(getnowblock|getblock|getaccount|gettransactioninfobyid|gettransactionbyid)$/,
-  new RegExp(`^v1/accounts/${ADDRESS}/transactions(/trc20)?$`),
+  new RegExp(`^v1/accounts/${ADDRESS}(/transactions(/trc20)?)?$`),
 ]
 
 const MAX_BODY_BYTES = 64 * 1024
