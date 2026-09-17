@@ -62,6 +62,27 @@ describe.runIf(run)('portfolio discovery matches TRONSCAN', { timeout: 90_000 },
     expect(portfolio.holdings.filter((h) => h.trust === 'unverified').length).toBeGreaterThan(0)
   })
 
+  it('reports TRX and verified tokens first, then the full scan', async () => {
+    const network = NETWORKS.nile
+    const partials: Awaited<ReturnType<typeof getPortfolio>>[] = []
+    const full = await getPortfolio(getClient(network), network, ADDRESS, { onProgress: (p) => partials.push(p) })
+    expect(partials).toHaveLength(1)
+    expect(partials[0].complete).toBe(false)
+    expect(partials[0].trx).toBe(full.trx)
+    expect(partials[0].holdings.every((h) => h.trust === 'verified')).toBe(true)
+    expect(full.complete).toBe(true)
+    expect(full.holdings.length).toBeGreaterThan(partials[0].holdings.length)
+  })
+
+  it('skips discovery when asked, reading only verified and custom tokens', async () => {
+    const network = NETWORKS.nile
+    const jst = { contract: 'TF17BgPaZYbz8oxbjhriubPDsA7ArKoLX3', symbol: 'JST', name: 'JST', decimals: 18 }
+    const p = await getPortfolio(getClient(network), network, ADDRESS, { discover: false, customTokens: [jst] })
+    expect(p.complete).toBe(true)
+    expect(p.holdings.map((h) => h.trust).sort()).toEqual(['custom', 'verified'])
+    expect(p.holdings.find((h) => h.id === jst.contract)?.balance).toBe(66n * 10n ** 18n)
+  })
+
   it('returns an empty portfolio for a never-used address on mainnet', async () => {
     const network = NETWORKS.mainnet
     const p = await getPortfolio(getClient(network), network, 'TLrpNTBuCpGMrB9TyVwgEhNVRhtWEQPHh4')

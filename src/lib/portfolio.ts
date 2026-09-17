@@ -40,9 +40,11 @@ export interface Portfolio {
   holdings: Holding[]
   /** Discovered tokens not shown because the address holds more than MAX_DISCOVERED. */
   omitted: number
+  /** False for the early partial result and for refreshes that skip discovery. */
+  complete: boolean
 }
 
-/** Upper bound on discovered tokens read per refresh; spam airdrops can list hundreds. */
+/** Upper bound on discovered TRC20 plus TRC10 tokens read per scan; spam airdrops can list hundreds. */
 export const MAX_DISCOVERED = 40
 const CONCURRENCY = 6
 
@@ -140,7 +142,8 @@ async function trc20Meta(tw: TronWeb, network: Network, contract: string, known:
   const key = `${network.id}:trc20:${contract}`
   const hit = cachedMeta(key)
   if (hit) return hit
-  const meta = await withRetry(() => getTokenMetadata(tw, contract))
+  // name() is skipped for discovered tokens: the symbol is enough, and it saves a call per token.
+  const meta = await withRetry(() => getTokenMetadata(tw, contract, { withName: false }))
   const clean = { symbol: sanitizeLabel(meta.symbol, 16) || '?', name: sanitizeLabel(meta.name, 48), decimals: meta.decimals }
   if (!Number.isInteger(clean.decimals) || clean.decimals < 0 || clean.decimals > 77) throw new Error('Token reports invalid decimals')
   storeMeta(key, clean)
@@ -193,72 +196,102 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promis
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : String(e))
 
-export async function getPortfolio(tw: TronWeb, network: Network, address: string, customTokens: TokenPreset[] = []): Promise<Portfolio> {
-  const [account, indexed] = await Promise.all([
-    withRetry(() => tw.trx.getUnconfirmedAccount(address)) as Promise<{ address?: string; balance?: number; assetV2?: { key: string; value: number }[] }>,
-    // The index only adds discovery; if it is down, verified and custom tokens still load.
-    withRetry(() => fetchIndexedAccount(network, address)).catch(() => null),
-  ])
+export interface PortfolioOptions {
+  customTokens?: TokenPreset[]
+  /**
+   * Find and read every other token the address holds. When false, only TRX, TRC10 balances,
+   * verified and custom tokens are read; callers keep their previously discovered holdings.
+   */
+  discover?: boolean
+  /** Called once TRX and verified/custom balances are known, before discovery finishes. */
+  onProgress?: (partial: Portfolio) => void
+}
 
+export async function getPortfolio(tw: TronWeb, network: Network, address: string, opts: PortfolioOptions = {}): Promise<Portfolio> {
+  const { customTokens = [], discover = true, onProgress } = opts
   const known = [...network.tokens, ...customTokens]
   const customContracts = new Set(customTokens.map((t) => t.contract))
 
-  const indexedBalances = new Map<string, string>()
+  // Phase 1: the account itself and the tokens this wallet vouches for.
+  const indexedPromise = discover ? withRetry(() => fetchIndexedAccount(network, address)).catch(() => null) : Promise.resolve(null)
+  const account = (await withRetry(() => tw.trx.getUnconfirmedAccount(address))) as { address?: string; balance?: number; assetV2?: { key: string; value: number }[] }
+  const trx = BigInt(account.balance ?? 0)
+  const activated = Boolean(account.address)
+
+  const knownHoldings = (await mapLimit(known, CONCURRENCY, (t) => readTrc20(tw, network, address, t.contract, known, customContracts, true))).filter(isHolding)
+  const partial: Portfolio = { trx, activated, holdings: sortHoldings(knownHoldings, network), omitted: 0, complete: !discover }
+  if (!discover) return partial
+  onProgress?.(partial)
+
+  // Phase 2: everything else the address holds, capped so spam airdrops cannot stall the page.
+  const indexed = await indexedPromise
+  const discoveredTrc20: string[] = []
   for (const entry of indexed?.trc20 ?? []) {
-    for (const [contract, value] of Object.entries(entry)) indexedBalances.set(contract, value)
+    for (const [contract, value] of Object.entries(entry)) {
+      if (value !== '0' && !known.some((t) => t.contract === contract) && !discoveredTrc20.includes(contract)) discoveredTrc20.push(contract)
+    }
   }
-  const discovered = [...indexedBalances.entries()].filter(([contract, value]) => value !== '0' && !known.some((t) => t.contract === contract)).map(([contract]) => contract)
-  const omitted = Math.max(0, discovered.length - MAX_DISCOVERED)
-  const contracts = [...known.map((t) => t.contract), ...discovered.slice(0, MAX_DISCOVERED)]
-  const alwaysShown = new Set(known.map((t) => t.contract))
-
-  const trc20 = await mapLimit(contracts, CONCURRENCY, async (contract): Promise<Holding | null> => {
-    let meta: Meta
-    try {
-      meta = await trc20Meta(tw, network, contract, known)
-    } catch (e) {
-      // A contract that is definitively not a TRC20 token is not a holding. Any other failure keeps the
-      // token listed without a balance (decimals are unknown), so nothing the address owns silently vanishes.
-      if (e instanceof NotATokenError && !alwaysShown.has(contract)) return null
-      return {
-        kind: 'trc20',
-        id: contract,
-        symbol: shortAddress(contract, 4, 4),
-        name: '',
-        decimals: 0,
-        balance: null,
-        trust: customContracts.has(contract) ? 'custom' : 'unverified',
-        error: e instanceof NotATokenError ? e.message : 'Could not load this token. Refresh to try again.',
-      }
-    }
-    // Displayed balances always come from the contract. If it cannot be read, the row shows
-    // "Unavailable" rather than the indexer's number, which may lag behind the chain.
-    let balance: bigint | null
-    let error: string | undefined
-    try {
-      balance = await withRetry(() => getTrc20Balance(tw, contract, address))
-    } catch (e) {
-      balance = null
-      error = isTransientError(e) ? 'Could not read the balance. Refresh to try again.' : errorText(e)
-    }
-    if (!alwaysShown.has(contract) && balance === 0n) return null
-    return { kind: 'trc20', id: contract, symbol: meta.symbol, name: meta.name, decimals: meta.decimals, balance, trust: classifyTrust('trc20', contract, meta.symbol, network, customContracts), error }
-  })
-
   const trc10Entries = (account.assetV2 ?? []).filter((a) => a.value > 0)
-  const trc10 = await mapLimit(trc10Entries, CONCURRENCY, async ({ key, value }): Promise<Holding | null> => {
-    try {
-      const meta = await trc10Meta(tw, network, key)
-      return { kind: 'trc10', id: key, symbol: meta.symbol, name: meta.name, decimals: meta.decimals, balance: BigInt(value), trust: classifyTrust('trc10', key, meta.symbol, network, customContracts) }
-    } catch {
-      return { kind: 'trc10', id: key, symbol: key, name: 'TRC10 token', decimals: 0, balance: BigInt(value), trust: 'unverified', error: 'Token details unavailable' }
-    }
-  })
+  const trc20Slots = Math.min(discoveredTrc20.length, MAX_DISCOVERED)
+  const trc10Slots = Math.min(trc10Entries.length, MAX_DISCOVERED - trc20Slots)
+  const omitted = discoveredTrc20.length - trc20Slots + (trc10Entries.length - trc10Slots)
+
+  const [trc20, trc10] = await Promise.all([
+    mapLimit(discoveredTrc20.slice(0, trc20Slots), CONCURRENCY, (contract) => readTrc20(tw, network, address, contract, known, customContracts, false)),
+    mapLimit(trc10Entries.slice(0, trc10Slots), CONCURRENCY, ({ key, value }) => readTrc10(tw, network, key, BigInt(value), customContracts)),
+  ])
 
   return {
-    trx: BigInt(account.balance ?? 0),
-    activated: Boolean(account.address),
-    holdings: sortHoldings([...trc20, ...trc10].filter((h): h is Holding => h !== null), network),
+    trx,
+    activated,
+    holdings: sortHoldings([...knownHoldings, ...trc20.filter(isHolding), ...trc10], network),
     omitted,
+    complete: true,
+  }
+}
+
+const isHolding = (h: Holding | null): h is Holding => h !== null
+
+async function readTrc20(tw: TronWeb, network: Network, address: string, contract: string, known: TokenPreset[], customContracts: Set<string>, alwaysShown: boolean): Promise<Holding | null> {
+  let meta: Meta
+  try {
+    meta = await trc20Meta(tw, network, contract, known)
+  } catch (e) {
+    // A contract that is definitively not a TRC20 token is not a holding. Any other failure keeps the
+    // token listed without a balance (decimals are unknown), so nothing the address owns silently vanishes.
+    if (e instanceof NotATokenError && !alwaysShown) return null
+    return {
+      kind: 'trc20',
+      id: contract,
+      symbol: shortAddress(contract, 4, 4),
+      name: '',
+      decimals: 0,
+      balance: null,
+      trust: customContracts.has(contract) ? 'custom' : 'unverified',
+      error: e instanceof NotATokenError ? e.message : 'Could not load this token. Refresh to try again.',
+    }
+  }
+
+  // Displayed balances always come from the contract. If it cannot be read, the row shows
+  // "Unavailable" rather than the indexer's number, which may lag behind the chain.
+  let balance: bigint | null
+  let error: string | undefined
+  try {
+    balance = await withRetry(() => getTrc20Balance(tw, contract, address))
+  } catch (e) {
+    balance = null
+    error = isTransientError(e) ? 'Could not read the balance. Refresh to try again.' : errorText(e)
+  }
+  if (!alwaysShown && balance === 0n) return null
+  return { kind: 'trc20', id: contract, symbol: meta.symbol, name: meta.name, decimals: meta.decimals, balance, trust: classifyTrust('trc20', contract, meta.symbol, network, customContracts), error }
+}
+
+async function readTrc10(tw: TronWeb, network: Network, id: string, balance: bigint, customContracts: Set<string>): Promise<Holding> {
+  try {
+    const meta = await trc10Meta(tw, network, id)
+    return { kind: 'trc10', id, symbol: meta.symbol, name: meta.name, decimals: meta.decimals, balance, trust: classifyTrust('trc10', id, meta.symbol, network, customContracts) }
+  } catch {
+    // Without precision the amount cannot be scaled, so it is shown as unavailable rather than guessed.
+    return { kind: 'trc10', id, symbol: `Token ${id}`, name: 'TRC10 token', decimals: 0, balance: null, trust: 'unverified', error: 'Could not load this token. Refresh to try again.' }
   }
 }

@@ -3,10 +3,13 @@ import { canSend, holdingToToken, type Holding, type Trust } from '../lib/portfo
 import type { ActivityItem, Asset } from '../lib/tron'
 import { formatBalance, fromBaseUnits, shortAddress, TRX_DECIMALS } from '../lib/units'
 import type { ChainData } from '../state/chain'
-import { IconArrowIn, IconArrowOut, IconExternal, IconPlus, IconRefresh } from '../ui/icons'
-import { Button, IconButton, Notice } from '../ui/kit'
+import { useState } from 'react'
+import { IconArrowIn, IconArrowOut, IconChevron, IconExternal, IconPlus, IconRefresh } from '../ui/icons'
+import { Button, IconButton, Notice, Spinner } from '../ui/kit'
 
 /** Shared by the wallet and the view-only address lookup; nothing here needs keys. */
+
+const COLLAPSE_UNVERIFIED_ABOVE = 8
 
 const TRUST_LABEL: Record<Trust, string> = {
   verified: 'Verified',
@@ -51,6 +54,12 @@ export function ResourceStrip({ chain, network }: { chain: ChainData; network: N
 
 export function AssetsPanel({ chain, network, onSend, onAddToken }: { chain: ChainData; network: Network; onSend?: (a: Asset) => void; onAddToken?: () => void }) {
   const holdings = chain.holdings
+  const primary = holdings?.filter((h) => h.trust === 'verified' || h.trust === 'custom') ?? []
+  const others = holdings?.filter((h) => h.trust === 'unverified' || h.trust === 'lookalike') ?? []
+  const lookalikes = others.filter((h) => h.trust === 'lookalike').length
+  // Unverified tokens are often spam airdrops: shown by default when few, collapsed when many.
+  const [showOthers, setShowOthers] = useState<boolean | null>(null)
+  const othersOpen = showOthers ?? others.length <= COLLAPSE_UNVERIFIED_ABOVE
   // Look-alikes are shown for transparency but never counted as real holdings.
   const tokenCount = holdings?.filter((h) => h.trust !== 'lookalike' && (h.balance ?? 0n) > 0n).length ?? 0
   return (
@@ -84,19 +93,40 @@ export function AssetsPanel({ chain, network, onSend, onAddToken }: { chain: Cha
         </li>
         {holdings === null ? (
           chain.error ? null : (
-          <li className="asset asset-loading">
-            <span className="asset-glyph" aria-hidden />
-            <span className="asset-id">
-              <span className="skeleton" style={{ width: '40%' }} />
-              <span className="skeleton" style={{ width: '60%', marginTop: 6 }} />
-            </span>
-            <span className="asset-bal">
-              <span className="skeleton" />
-            </span>
-          </li>
+            <li className="asset asset-loading">
+              <span className="asset-glyph" aria-hidden />
+              <span className="asset-id">
+                <span className="skeleton" style={{ width: '40%' }} />
+                <span className="skeleton" style={{ width: '60%', marginTop: 6 }} />
+              </span>
+              <span className="asset-bal">
+                <span className="skeleton" />
+              </span>
+            </li>
           )
         ) : (
-          holdings.map((h) => <HoldingRow key={`${h.kind}:${h.id}`} holding={h} network={network} onSend={onSend} />)
+          <>
+            {primary.map((h) => (
+              <HoldingRow key={`${h.kind}:${h.id}`} holding={h} network={network} onSend={onSend} />
+            ))}
+            {chain.discovering && others.length === 0 ? (
+              <li className="asset-status" role="status">
+                <Spinner /> Finding other tokens this address holds
+              </li>
+            ) : null}
+            {others.length > 0 ? (
+              <li className="asset-group">
+                <button type="button" aria-expanded={othersOpen} onClick={() => setShowOthers(!othersOpen)}>
+                  <IconChevron className="asset-group-chev" />
+                  <span>Unverified tokens</span>
+                  <span className="panel-count">{others.length}</span>
+                  {lookalikes > 0 ? <span className="asset-tag asset-tag-lookalike">{lookalikes} look-alike</span> : null}
+                  <span className="asset-group-hint">{othersOpen ? 'Hide' : 'Show'}</span>
+                </button>
+              </li>
+            ) : null}
+            {othersOpen ? others.map((h) => <HoldingRow key={`${h.kind}:${h.id}`} holding={h} network={network} onSend={onSend} />) : null}
+          </>
         )}
       </ul>
       {chain.omittedTokens > 0 ? (

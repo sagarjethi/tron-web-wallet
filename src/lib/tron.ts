@@ -93,7 +93,8 @@ export async function getTrc20Balance(tw: TronWeb, contract: string, owner: stri
 /** The contract definitively is not a readable TRC20 token (as opposed to a failed request). */
 export class NotATokenError extends Error {}
 
-export async function getTokenMetadata(tw: TronWeb, contract: string): Promise<TokenPreset> {
+/** Reads symbol, decimals and (unless `withName` is false, to save a call) name from a TRC20 contract. */
+export async function getTokenMetadata(tw: TronWeb, contract: string, opts: { withName?: boolean } = {}): Promise<TokenPreset> {
   if (!isTronAddress(contract)) throw new Error('That is not a TRON contract address')
   const decode = (hex: string, type: string) => tw.utils.abi.decodeParams([], [type], '0x' + hex)[0]
   // Most tokens return string; some older ones return bytes32 padded with zero bytes.
@@ -108,7 +109,7 @@ export async function getTokenMetadata(tw: TronWeb, contract: string): Promise<T
   try {
     const [symbol, name, decimals] = await Promise.all([
       constantCall(tw, contract, 'symbol()').then((r) => decodeText(r.hex)),
-      constantCall(tw, contract, 'name()').then((r) => decodeText(r.hex)),
+      opts.withName === false ? Promise.resolve('') : constantCall(tw, contract, 'name()').then((r) => decodeText(r.hex)),
       constantCall(tw, contract, 'decimals()').then((r) => Number(decode(r.hex, 'uint8'))),
     ])
     return { contract, symbol, name, decimals }
