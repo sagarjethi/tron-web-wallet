@@ -46,6 +46,8 @@ Dashboard: https://www.trongrid.io/dashboard/keys
 - Nile accepts the header but does not validate it.
 - Shasta's CORS preflight does not allow the header, so a browser could never send it there anyway.
 - Keys can be restricted by user agent, contract and method on the dashboard.
+- A key allows 15 requests per second; a burst above that suspends the key for a few seconds (`The key exceeds the frequency limit(15), and the query server is suspended for 2s`).
+  The wallet paces browser traffic to 8 per second and caches token metadata in the proxy to stay under it.
 
 The wallet never sends the key from the browser.
 All TronGrid traffic goes through the same-origin proxy in `api/tron.ts`, which adds `TRONGRID_API_KEY` on the server.

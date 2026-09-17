@@ -68,7 +68,12 @@ The proxy:
 - rejects requests whose `Origin` is another site, methods other than GET and POST, and bodies over 64 KB;
 - never forwards upstream response headers, and scrubs the key from error bodies;
 - does not log requests, headers or bodies;
-- times out upstream calls after 20 seconds.
+- times out upstream calls after 20 seconds;
+- caches token metadata (symbol, name, decimals, TRC10 details), which never changes, in memory and in the Vercel Runtime Cache, so repeat lookups do not spend the key's quota;
+- stops forwarding while TronGrid reports the key suspended, answering with 429 and `Retry-After` instead of extending the suspension.
+
+TronGrid allows 15 requests per second per key and suspends the key after a burst.
+Because every visitor shares one key, the browser also paces its own traffic to 8 requests per second (`src/lib/limiter.ts`) and pauses entirely when told to retry later.
 
 The page's Content Security Policy only allows `connect-src 'self'`, so even injected script cannot call TronGrid directly.
 
@@ -133,6 +138,6 @@ Set in `vercel.json` and mirrored by `vite preview`:
 - This is a hot wallet in a browser.
   Use it for testnets and small amounts; keep large holdings on a hardware wallet.
 - A malicious browser extension with access to the page can read an unlocked wallet.
-- The proxy's allowlist and origin check stop casual abuse, but a determined script can still spend API quota.
+- The proxy's allowlist, origin check and caching stop casual abuse, but a determined script can still spend API quota or trigger a key suspension.
   Add a Vercel Firewall rate limit rule on `/api/tron` if that becomes a problem.
 - Vercel's default Deployment Protection puts per-deployment URLs behind a Vercel login; only the production alias is public.
