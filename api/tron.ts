@@ -8,12 +8,15 @@
  * - Only the endpoints the wallet uses are forwarded, so the key cannot be spent on arbitrary calls.
  * - Upstream headers are never passed back, error bodies are scrubbed of the key, and nothing is logged.
  * - TronGrid allows 15 requests per second per key and suspends the key after a burst. Token metadata,
- *   which never changes, is cached in memory (Vercel reuses warm instances across visitors), and while
- *   the key is suspended requests are answered locally with Retry-After instead of extending it.
+ *   which never changes, is cached in memory and in the Vercel Runtime Cache (shared by every function
+ *   instance in the region), and while the key is suspended requests are answered locally with
+ *   Retry-After instead of extending it.
  *
  * Kept free of relative imports so Vercel can compile it on its own; vite.config.ts reuses
  * `handleTronProxy` for the local dev server.
  */
+
+import { getCache } from '@vercel/functions'
 
 export const UPSTREAMS = {
   mainnet: 'https://api.trongrid.io',
@@ -43,13 +46,37 @@ interface CachedResponse {
   expires: number
 }
 
+const METADATA_TAG = 'trongrid-metadata'
 const metadataCache = new Map<string, CachedResponse>()
 let suspendedUntil = 0
 
-/** Test hook: clears the metadata cache and suspension state. */
-export function resetProxyState() {
+/** Shared across instances on Vercel; an in-memory stand-in locally. Cache trouble never fails a request. */
+const sharedCache = () => getCache({ namespace: 'tron-proxy' })
+
+async function readShared(key: string): Promise<CachedResponse | undefined> {
+  try {
+    return ((await sharedCache().get(key)) as CachedResponse | undefined) ?? undefined
+  } catch {
+    return undefined
+  }
+}
+
+function writeShared(key: string, value: CachedResponse) {
+  sharedCache()
+    .set(key, value, { ttl: METADATA_TTL_MS / 1000, tags: [METADATA_TAG], name: METADATA_TAG })
+    .catch(() => {})
+}
+
+function rememberLocally(key: string, value: CachedResponse) {
+  if (metadataCache.size >= METADATA_CACHE_MAX) metadataCache.delete(metadataCache.keys().next().value!)
+  metadataCache.set(key, value)
+}
+
+/** Test hook: clears both cache layers and the suspension state. */
+export async function resetProxyState() {
   metadataCache.clear()
   suspendedUntil = 0
+  await sharedCache().expireTag(METADATA_TAG).catch(() => {})
 }
 
 /** Cache key for requests whose answer never changes, or null if the request must not be cached. */
@@ -124,11 +151,15 @@ export async function handleTronProxy(request: Request, apiKey: string | undefin
 
   const cacheKey = metadataCacheKey(network, path.replace(/^\/+/, ''), body)
   if (cacheKey) {
-    const hit = metadataCache.get(cacheKey)
-    if (hit && hit.expires > Date.now()) {
-      return new Response(hit.body, { status: 200, headers: { 'content-type': hit.contentType, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'x-proxy-cache': 'hit' } })
+    const cachedHeaders = (contentType: string, layer: string) => ({ 'content-type': contentType, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'x-proxy-cache': layer })
+    const local = metadataCache.get(cacheKey)
+    if (local && local.expires > Date.now()) return new Response(local.body, { status: 200, headers: cachedHeaders(local.contentType, 'hit') })
+    if (local) metadataCache.delete(cacheKey)
+    const shared = await readShared(cacheKey)
+    if (shared && shared.expires > Date.now()) {
+      rememberLocally(cacheKey, shared)
+      return new Response(shared.body, { status: 200, headers: cachedHeaders(shared.contentType, 'shared-hit') })
     }
-    if (hit) metadataCache.delete(cacheKey)
   }
 
   // The key is suspended: answer locally so waiting clients do not extend the suspension.
@@ -161,8 +192,9 @@ export async function handleTronProxy(request: Request, apiKey: string | undefin
   if (res.ok && cacheKey) {
     const text = await res.text()
     if (isCacheableAnswer(path, text)) {
-      if (metadataCache.size >= METADATA_CACHE_MAX) metadataCache.delete(metadataCache.keys().next().value!)
-      metadataCache.set(cacheKey, { body: text, contentType: responseHeaders['content-type'], expires: Date.now() + METADATA_TTL_MS })
+      const entry = { body: text, contentType: responseHeaders['content-type'], expires: Date.now() + METADATA_TTL_MS }
+      rememberLocally(cacheKey, entry)
+      writeShared(cacheKey, entry)
     }
     return new Response(text, { status: res.status, headers: { ...responseHeaders, 'x-proxy-cache': 'miss' } })
   }

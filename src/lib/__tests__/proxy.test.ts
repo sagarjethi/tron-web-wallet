@@ -24,9 +24,9 @@ describe('resolveUpstream', () => {
 })
 
 describe('handleTronProxy', () => {
-  afterEach(() => {
+  afterEach(async () => {
     vi.restoreAllMocks()
-    resetProxyState()
+    await resetProxyState()
   })
 
   const upstream = () =>
@@ -81,9 +81,9 @@ describe('handleTronProxy', () => {
 })
 
 describe('rate limit protection', () => {
-  afterEach(() => {
+  afterEach(async () => {
     vi.restoreAllMocks()
-    resetProxyState()
+    await resetProxyState()
   })
 
   const post = (path: string, body: unknown) =>
@@ -97,6 +97,18 @@ describe('rate limit protection', () => {
     expect(first.headers.get('x-proxy-cache')).toBe('miss')
     expect(second.headers.get('x-proxy-cache')).toBe('hit')
     expect(await second.text()).toContain('constant_result')
+    expect(spy).toHaveBeenCalledTimes(1)
+  })
+
+  it('shares cached metadata across instances through the runtime cache', async () => {
+    const { getCache } = await import('@vercel/functions')
+    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('{"name":"54524e","abbr":"544e","precision":6}', { status: 200 }))
+    const req = () => post('wallet/getassetissuebyid', { value: '1005416' })
+    expect((await handleTronProxy(req(), 'k')).headers.get('x-proxy-cache')).toBe('miss')
+    // Simulate a different instance: its local layer is empty, the shared layer is not.
+    await new Promise((r) => setTimeout(r, 10))
+    const shared = await getCache({ namespace: 'tron-proxy' }).get('mainnet|asset|1005416')
+    expect(shared).toBeDefined()
     expect(spy).toHaveBeenCalledTimes(1)
   })
 
