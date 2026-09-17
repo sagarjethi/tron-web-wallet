@@ -71,6 +71,8 @@ Push only when the owner asks.
 - Never broadcast transactions from tests or scripts.
 - Verify UI changes in a real browser, on desktop and at 375px width, in light and dark mode.
 - Follow `docs/FRONTEND_TEMPLATES.md` for design tokens, components and copy rules.
+- No sample or placeholder data may ship to production.
+  Sample content belongs only in the development-only component kit (`src/components/Kit.tsx`) and in tests.
 - Never use the em dash character in code, copy or docs.
 
 ## Deployment

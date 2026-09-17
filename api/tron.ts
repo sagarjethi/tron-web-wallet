@@ -34,7 +34,7 @@ const MAX_ERROR_BODY_BYTES = 16 * 1024
 const UPSTREAM_TIMEOUT_MS = 20_000
 
 export function resolveUpstream(network: string, path: string): string | null {
-  if (!Object.hasOwn(UPSTREAMS, network)) return null
+  if (!Object.prototype.hasOwnProperty.call(UPSTREAMS, network)) return null
   const clean = path.replace(/^\/+/, '')
   if (!ALLOWED_PATHS.some((re) => re.test(clean))) return null
   return `${UPSTREAMS[network as ProxyNetwork]}/${clean}`
@@ -93,7 +93,10 @@ export async function handleTronProxy(request: Request, apiKey: string | undefin
   return new Response(text.split(apiKey).join('[redacted]'), { status: res.status, headers: responseHeaders })
 }
 
-const handler = (request: Request) => handleTronProxy(request, process.env.TRONGRID_API_KEY)
+// Read through globalThis so the file type-checks under Vercel's default compiler settings (no Node types).
+const env = (globalThis as unknown as { process: { env: Record<string, string | undefined> } }).process.env
+
+const handler = (request: Request) => handleTronProxy(request, env.TRONGRID_API_KEY)
 
 export const GET = handler
 export const POST = handler

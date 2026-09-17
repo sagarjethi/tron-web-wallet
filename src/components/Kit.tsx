@@ -29,7 +29,7 @@ export function Kit() {
           <span>Tron Wallet</span>
         </a>
         <h1>Component kit</h1>
-        <p className="muted">Tokens, primitives and page templates used across the wallet. Read docs/FRONTEND_TEMPLATES.md for the rules behind them.</p>
+        <p className="muted">Tokens, primitives and page templates used across the wallet, filled with sample data. Available in development only. Read docs/FRONTEND_TEMPLATES.md for the rules behind them.</p>
         <Segmented
           label="Theme"
           value={theme}

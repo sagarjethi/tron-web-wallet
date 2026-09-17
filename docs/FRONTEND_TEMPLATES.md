@@ -1,7 +1,8 @@
 # Frontend templates
 
 The design system, the building blocks, and copy-ready templates for new screens.
-Open `/#kit` in the running app to see every piece live, in light and dark.
+Run `npm run dev` and open `/#kit` to see every piece live, in light and dark.
+The kit uses sample data, so it is excluded from production builds.
 
 ## Design principles
 

@@ -78,11 +78,13 @@ export function SettingsSheet({ onClose }: { onClose: () => void }) {
         </Button>
       </section>
 
-      <p className="field-hint">
-        <a className="text-link" href="#kit">
-          Open the component kit
-        </a>
-      </p>
+      {import.meta.env.DEV ? (
+        <p className="field-hint">
+          <a className="text-link" href="#kit">
+            Open the component kit
+          </a>
+        </p>
+      ) : null}
     </Sheet>
   )
 }
