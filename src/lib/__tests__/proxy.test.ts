@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { handleTronProxy, resolveUpstream } from '../../../api/tron'
+import { handleTronProxy, resetProxyState, resolveUpstream } from '../../../api/tron'
 
 const ADDR = 'TUEZSdKsoDHQMeZwihtdoBiN46zxhGWYdH'
 
@@ -24,7 +24,10 @@ describe('resolveUpstream', () => {
 })
 
 describe('handleTronProxy', () => {
-  afterEach(() => vi.restoreAllMocks())
+  afterEach(() => {
+    vi.restoreAllMocks()
+    resetProxyState()
+  })
 
   const upstream = () =>
     vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('{"ok":true}', { status: 200, headers: { 'content-type': 'application/json' } }))
@@ -74,5 +77,54 @@ describe('handleTronProxy', () => {
   it('reports an unreachable upstream as 502', async () => {
     vi.spyOn(globalThis, 'fetch').mockRejectedValue(new TypeError('fetch failed'))
     expect((await handleTronProxy(new Request('https://w.example/api/tron/shasta/wallet/getnowblock'), 'k')).status).toBe(502)
+  })
+})
+
+describe('rate limit protection', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+    resetProxyState()
+  })
+
+  const post = (path: string, body: unknown) =>
+    new Request(`https://w.example/api/tron/mainnet/${path}`, { method: 'POST', body: JSON.stringify(body) })
+
+  it('serves token metadata from cache after the first read', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('{"result":{"result":true},"constant_result":["06"]}', { status: 200 }))
+    const req = () => post('wallet/triggerconstantcontract', { contract_address: 'TXYZ', function_selector: 'decimals()' })
+    const first = await handleTronProxy(req(), 'k')
+    const second = await handleTronProxy(req(), 'k')
+    expect(first.headers.get('x-proxy-cache')).toBe('miss')
+    expect(second.headers.get('x-proxy-cache')).toBe('hit')
+    expect(await second.text()).toContain('constant_result')
+    expect(spy).toHaveBeenCalledTimes(1)
+  })
+
+  it('never caches balances or failed reads', async () => {
+    const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response('{"result":{"result":true},"constant_result":["01"]}', { status: 200 }))
+    const balance = () => post('wallet/triggerconstantcontract', { contract_address: 'TXYZ', function_selector: 'balanceOf(address)', parameter: 'ab' })
+    await handleTronProxy(balance(), 'k')
+    await handleTronProxy(balance(), 'k')
+    expect(spy).toHaveBeenCalledTimes(2)
+
+    spy.mockImplementation(async () => new Response('{"result":{"code":"CONTRACT_VALIDATE_ERROR"}}', { status: 200 }))
+    const symbol = () => post('wallet/triggerconstantcontract', { contract_address: 'TBAD', function_selector: 'symbol()' })
+    await handleTronProxy(symbol(), 'k')
+    await handleTronProxy(symbol(), 'k')
+    expect(spy).toHaveBeenCalledTimes(4)
+  })
+
+  it('stops forwarding while TronGrid has suspended the key, and tells clients how long to wait', async () => {
+    const spy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('{"Error":"The key exceeds the frequency limit(15), and the query server is suspended for 3s"}', { status: 429 }))
+    const first = await handleTronProxy(new Request('https://w.example/api/tron/mainnet/wallet/getnowblock'), 'k')
+    expect(first.status).toBe(429)
+    expect(first.headers.get('retry-after')).toBe('3')
+
+    const second = await handleTronProxy(new Request('https://w.example/api/tron/nile/wallet/getnowblock'), 'k')
+    expect(second.status).toBe(429)
+    expect(Number(second.headers.get('retry-after'))).toBeGreaterThan(0)
+    expect(spy).toHaveBeenCalledTimes(1)
   })
 })

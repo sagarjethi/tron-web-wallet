@@ -7,6 +7,9 @@
  * - The TronGrid API key stays on the server (TRONGRID_API_KEY) and never ships in browser code.
  * - Only the endpoints the wallet uses are forwarded, so the key cannot be spent on arbitrary calls.
  * - Upstream headers are never passed back, error bodies are scrubbed of the key, and nothing is logged.
+ * - TronGrid allows 15 requests per second per key and suspends the key after a burst. Token metadata,
+ *   which never changes, is cached in memory (Vercel reuses warm instances across visitors), and while
+ *   the key is suspended requests are answered locally with Retry-After instead of extending it.
  *
  * Kept free of relative imports so Vercel can compile it on its own; vite.config.ts reuses
  * `handleTronProxy` for the local dev server.
@@ -30,6 +33,55 @@ export const ALLOWED_PATHS: RegExp[] = [
 ]
 
 const MAX_BODY_BYTES = 64 * 1024
+const METADATA_TTL_MS = 6 * 60 * 60 * 1000
+const METADATA_CACHE_MAX = 2000
+const METADATA_SELECTORS = new Set(['symbol()', 'name()', 'decimals()'])
+
+interface CachedResponse {
+  body: string
+  contentType: string
+  expires: number
+}
+
+const metadataCache = new Map<string, CachedResponse>()
+let suspendedUntil = 0
+
+/** Test hook: clears the metadata cache and suspension state. */
+export function resetProxyState() {
+  metadataCache.clear()
+  suspendedUntil = 0
+}
+
+/** Cache key for requests whose answer never changes, or null if the request must not be cached. */
+function metadataCacheKey(network: string, path: string, body: string | undefined): string | null {
+  if (!body) return null
+  let payload: Record<string, unknown>
+  try {
+    payload = JSON.parse(body) as Record<string, unknown>
+  } catch {
+    return null
+  }
+  if (path === 'wallet/getassetissuebyid' && typeof payload.value === 'string') return `${network}|asset|${payload.value}`
+  if (
+    path === 'wallet/triggerconstantcontract' &&
+    typeof payload.contract_address === 'string' &&
+    typeof payload.function_selector === 'string' &&
+    METADATA_SELECTORS.has(payload.function_selector) &&
+    !payload.parameter
+  ) {
+    return `${network}|meta|${payload.contract_address}|${payload.function_selector}`
+  }
+  return null
+}
+
+function isCacheableAnswer(path: string, text: string): boolean {
+  try {
+    const data = JSON.parse(text) as { result?: { result?: boolean }; constant_result?: string[]; name?: string }
+    return path === 'wallet/getassetissuebyid' ? Boolean(data.name) : data.result?.result === true && Array.isArray(data.constant_result)
+  } catch {
+    return false
+  }
+}
 const MAX_ERROR_BODY_BYTES = 16 * 1024
 const UPSTREAM_TIMEOUT_MS = 20_000
 
@@ -54,7 +106,8 @@ export async function handleTronProxy(request: Request, apiKey: string | undefin
   url.searchParams.delete('route')
   const match = /^([a-z]+)\/(.+)$/.exec(route)
   if (!match) return json(404, 'Unknown route')
-  const upstream = resolveUpstream(match[1], match[2])
+  const [, network, path] = match
+  const upstream = resolveUpstream(network, path)
   if (!upstream) return json(403, 'Endpoint not allowed')
 
   if (request.method !== 'GET' && request.method !== 'POST') return json(405, 'Method not allowed')
@@ -67,6 +120,25 @@ export async function handleTronProxy(request: Request, apiKey: string | undefin
   if (request.method === 'POST') {
     body = await request.text()
     if (new TextEncoder().encode(body).byteLength > MAX_BODY_BYTES) return json(413, 'Request body too large')
+  }
+
+  const cacheKey = metadataCacheKey(network, path.replace(/^\/+/, ''), body)
+  if (cacheKey) {
+    const hit = metadataCache.get(cacheKey)
+    if (hit && hit.expires > Date.now()) {
+      return new Response(hit.body, { status: 200, headers: { 'content-type': hit.contentType, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff', 'x-proxy-cache': 'hit' } })
+    }
+    if (hit) metadataCache.delete(cacheKey)
+  }
+
+  // The key is suspended: answer locally so waiting clients do not extend the suspension.
+  const now = Date.now()
+  if (now < suspendedUntil) {
+    const seconds = Math.ceil((suspendedUntil - now) / 1000)
+    return new Response(JSON.stringify({ error: 'TronGrid is rate limiting this wallet. Try again shortly.' }), {
+      status: 429,
+      headers: { 'content-type': 'application/json', 'cache-control': 'no-store', 'retry-after': String(seconds) },
+    })
   }
 
   const headers: Record<string, string> = { accept: 'application/json' }
@@ -86,11 +158,28 @@ export async function handleTronProxy(request: Request, apiKey: string | undefin
     'x-content-type-options': 'nosniff',
   }
 
-  // Successful bodies stream straight through. Error bodies are small; scrub them in case an
-  // upstream error ever echoes request headers back.
-  if (res.ok || !apiKey) return new Response(res.body, { status: res.status, headers: responseHeaders })
+  if (res.ok && cacheKey) {
+    const text = await res.text()
+    if (isCacheableAnswer(path, text)) {
+      if (metadataCache.size >= METADATA_CACHE_MAX) metadataCache.delete(metadataCache.keys().next().value!)
+      metadataCache.set(cacheKey, { body: text, contentType: responseHeaders['content-type'], expires: Date.now() + METADATA_TTL_MS })
+    }
+    return new Response(text, { status: res.status, headers: { ...responseHeaders, 'x-proxy-cache': 'miss' } })
+  }
+
+  // Successful bodies stream straight through.
+  if (res.ok) return new Response(res.body, { status: res.status, headers: responseHeaders })
+
+  // Error bodies are small; scrub them in case an upstream error ever echoes request headers back.
   const text = (await res.text()).slice(0, MAX_ERROR_BODY_BYTES)
-  return new Response(text.split(apiKey).join('[redacted]'), { status: res.status, headers: responseHeaders })
+  const safe = apiKey ? text.split(apiKey).join('[redacted]') : text
+  if (res.status === 429) {
+    // "The key exceeds the frequency limit(15), and the query server is suspended for 2s"
+    const seconds = Math.min(Number(/suspended for (\d+)/i.exec(text)?.[1] ?? 2), 60)
+    suspendedUntil = Math.max(suspendedUntil, Date.now() + seconds * 1000)
+    return new Response(safe, { status: 429, headers: { ...responseHeaders, 'retry-after': String(seconds) } })
+  }
+  return new Response(safe, { status: res.status, headers: responseHeaders })
 }
 
 // Read through globalThis so the file type-checks under Vercel's default compiler settings (no Node types).

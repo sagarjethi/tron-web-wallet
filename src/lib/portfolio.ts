@@ -1,7 +1,7 @@
 import type { TronWeb } from 'tronweb'
 import type { Network, TokenPreset } from './networks'
 import { shortAddress } from './units'
-import { apiBase, decodeNodeMessage, getTokenMetadata, getTrc20Balance, isTransientError, NotATokenError, withRetry } from './tron'
+import { apiBase, decodeNodeMessage, getTokenMetadata, getTrc20Balance, isTransientError, NotATokenError, tronGridFetch, withRetry } from './tron'
 
 /**
  * Everything an address holds on one network: TRX, every TRC20 token and every TRC10 token.
@@ -175,7 +175,7 @@ interface IndexedAccount {
 }
 
 async function fetchIndexedAccount(network: Network, address: string): Promise<IndexedAccount | null> {
-  const res = await fetch(`${apiBase(network)}/v1/accounts/${address}`)
+  const res = await tronGridFetch(`${apiBase(network)}/v1/accounts/${address}`)
   if (!res.ok) throw new Error(`TronGrid request failed with status code ${res.status}`)
   const body = (await res.json()) as { data?: IndexedAccount[] }
   return body.data?.[0] ?? null

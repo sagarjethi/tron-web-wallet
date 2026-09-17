@@ -1,5 +1,6 @@
 import { TronWeb, Trx } from 'tronweb'
 import { isTronAddress } from './address'
+import { retryAfterMs, tronGridLimiter } from './limiter'
 import type { Network, TokenPreset } from './networks'
 import { TRX_DECIMALS } from './units'
 
@@ -17,9 +18,44 @@ export function getClient(network: Network): TronWeb {
   let client = clients.get(network.id)
   if (!client) {
     client = new TronWeb({ fullHost: apiBase(network) })
+    paceProviders(client)
     clients.set(network.id, client)
   }
   return client
+}
+
+interface AxiosLike {
+  interceptors: {
+    request: { use: (fn: (config: unknown) => Promise<unknown>) => void }
+    response: { use: (ok: (r: unknown) => unknown, fail: (e: unknown) => Promise<never>) => void }
+  }
+}
+
+/** Routes every TronWeb HTTP request through the shared TronGrid limiter. */
+function paceProviders(tw: TronWeb) {
+  const instances = new Set([tw.fullNode, tw.solidityNode, tw.eventServer].map((p) => (p as unknown as { instance?: AxiosLike } | undefined)?.instance).filter(Boolean) as AxiosLike[])
+  for (const instance of instances) {
+    instance.interceptors.request.use(async (config) => {
+      await tronGridLimiter.acquire()
+      return config
+    })
+    instance.interceptors.response.use(
+      (response) => response,
+      (error) => {
+        const response = (error as { response?: { status?: number; headers?: Record<string, string> } }).response
+        if (response?.status === 429) tronGridLimiter.pause(retryAfterMs(response.headers?.['retry-after']))
+        return Promise.reject(error)
+      },
+    )
+  }
+}
+
+/** fetch() for TronGrid URLs, paced by the same limiter as TronWeb. */
+export async function tronGridFetch(url: string): Promise<Response> {
+  await tronGridLimiter.acquire()
+  const res = await fetch(url)
+  if (res.status === 429) tronGridLimiter.pause(retryAfterMs(res.headers.get('retry-after')))
+  return res
 }
 
 /** Rate limits, gateway errors and dropped connections: worth retrying, and never proof about the chain. */
@@ -35,6 +71,7 @@ export async function withRetry<T>(fn: () => Promise<T>, attempts = 4, baseDelay
       return await fn()
     } catch (e) {
       if (attempt >= attempts || !isTransientError(e)) throw e
+      // A 429 has already paused the shared limiter for Retry-After; this backoff adds jitter on top.
       await new Promise((r) => setTimeout(r, baseDelayMs * 2 ** (attempt - 1) * (0.75 + Math.random() * 0.5)))
     }
   }
@@ -376,7 +413,7 @@ interface GridTrc20 {
 }
 
 async function grid<T>(network: Network, path: string): Promise<T[]> {
-  const res = await fetch(`${apiBase(network)}${path}`)
+  const res = await tronGridFetch(`${apiBase(network)}${path}`)
   if (!res.ok) throw new Error(`TronGrid request failed with status code ${res.status}`)
   const body = (await res.json()) as { data?: T[]; success?: boolean }
   return body.data ?? []
